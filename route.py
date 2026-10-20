@@ -6,7 +6,9 @@ Usage:
 
 Stage 1 collects repo facts without any LLM (likely touched files from task keywords, git grep and
 git log -S, their size, whether they import each other, the tests covering them, repo size, risk
-flags) and asks three multiple-choice questions about them (pattern row of ORCHESTRATION.md, main
+flags). If the facts are clear-cut (rule_route: risk flag → row 7, one item in 1-2 files → row 1,
+separate items on separate files → row 5), the rules decide with no LLM; --no-rules skips this.
+Otherwise it asks three multiple-choice questions about them (pattern row of ORCHESTRATION.md, main
 model, effort). The default judge is the $0 jury in jury.py (Claude + Codex + a free Nous model,
 majority vote per question); --judge jev sends them to JEV's system_one instead. If every
 confidence is >= 0.7, that answer stands.
@@ -231,6 +233,10 @@ def collect(repo: str, task: str) -> dict:
                for s in sources):
             covering.add(t)
 
+    named = [w for w in words if "_" in w or re.search(r"[a-z][A-Z]", w)]
+    defined = sorted({w for w in named for f in sources
+                      if re.search(rf"\b(def|class|function|func|fn|interface|struct|type)\s+{re.escape(w)}\b", read_text(repo, f))})
+
     items = task_items(task)
     item_files = []
     if 2 <= len(items) <= 6:
@@ -265,6 +271,7 @@ def collect(repo: str, task: str) -> dict:
         "tests": sorted(covering),
         "history": history,
         "risks": risks,
+        "named_definitions": defined,
     }
 
 
@@ -307,6 +314,42 @@ def load_rules() -> tuple[str, dict[int, dict]]:
     guide = [line for line in text.splitlines()
              if line.startswith(("Choose per task", "Use a router", "Use one agent"))]
     return " ".join(guide), rows
+
+
+RULE_CONFIDENCE = 1.0  # a rule either matches or the task goes to the jury
+NOT_CLEAR_CUT = re.compile(
+    r"\b(review\w*|diff|merge|stuck|tried|rescue|codex|hermes|open[- ]source|third opinion|where is|"
+    r"find all|usages?|logs?|investigat\w*|research\w*|hypothes\w*|compar\w*|two attempts|approaches|"
+    r"team\w*|langgraph|crewai|agent framework|refactor\w*|redesign\w*|architect\w*|design)\b", re.I)
+
+
+def rule_route(task: str, facts: dict) -> tuple[dict | None, str]:
+    """Route with no LLM when the repo facts make the row obvious; otherwise say why the jury is needed."""
+    def answers(row: int, model: str, effort: str, why: str) -> tuple[dict, str]:
+        pick = {"pattern": str(row), "models": model, "effort": effort}
+        return {q: {"choice": c, "confidence": RULE_CONFIDENCE} for q, c in pick.items()} | {"reasons": [why]}, why
+
+    if m := NOT_CLEAR_CUT.search(task):
+        return None, f"not clear-cut: the task mentions '{m.group(0)}'"
+    files = [f["path"] for f in facts["files"]]
+    if facts["risks"]:
+        why = f"rule risky: risk flags {', '.join(facts['risks'])} → row 7, opus plans, codex reviews, high effort"
+        return answers(7, "opus", "high", why)
+    if not files:
+        return None, "not clear-cut: no files matched the task"
+    if facts["task_items"] == 1 and len(files) <= 2:
+        named = facts["named_definitions"]
+        effort = "low" if named and len(files) == 1 else "medium"
+        why = (f"rule one-bug: 1 item, {len(files)} file(s) ({', '.join(files)}), no risk flags → row 1, sonnet, {effort}"
+               + (f" (task names {', '.join(named)})" if effort == "low" else ""))
+        return answers(1, "sonnet", effort, why)
+    item_files = facts["item_files"]
+    if facts["task_items"] >= 2 and item_files and all(item_files) and not facts["item_overlap"]:
+        why = (f"rule tickets: {facts['task_items']} items on separate files, none shared, no risk flags "
+               f"→ row 5, sonnet, medium")
+        return answers(5, "sonnet", "medium", why)
+    return None, (f"not clear-cut: {facts['task_items']} item(s), {len(files)} files, "
+                  f"shared files: {', '.join(facts['item_overlap']) or 'none'}")
 
 
 def tally(verdict: str, votes: list[tuple[str, dict | str]]) -> dict:
@@ -454,32 +497,8 @@ def describe(source: str, answers: dict) -> str:
                                      for q in QUESTIONS)
 
 
-def main() -> int:
-    p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    p.add_argument("repo")
-    p.add_argument("task")
-    p.add_argument("--judge", choices=["jury", "jev"], default="jury")
-    args = p.parse_args()
-
-    if args.judge == "jev":
-        if VENV_PYTHON.exists() and Path(sys.prefix).resolve() != VENV_PYTHON.parent.parent.resolve():
-            os.execv(VENV_PYTHON, [str(VENV_PYTHON), __file__, *sys.argv[1:]])  # JEV lives in ~/jev/.venv
-        from dotenv import load_dotenv
-
-        load_dotenv(HERE / ".env")  # TYPESAFE_API_KEY
-    judge = args.judge
-    started = time.time()
-    repo = git(args.repo, "rev-parse", "--show-toplevel").strip()
-    if not repo:
-        raise SystemExit(f"{args.repo} is not a git repository")
-    guide, rows = load_rules()
-    facts = collect(repo, args.task)
-    summary = summarize(facts)
-    state = f"Task: {args.task}\n\nRepo facts, collected by a script without an LLM:\n{summary}"
-    print(summary, file=sys.stderr)
-
-    log = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "repo": repo, "task": args.task, "facts": facts,
-           "summary": summary, "judge": judge, judge: None, "scout": None}
+def staged(repo: str, state: str, guide: str, rows: dict[int, dict], judge: str, log: dict) -> tuple:
+    """The LLM stages: the jury (or JEV), then the scout."""
     first = scout = verdict = None
     try:
         first = log[judge] = (ask_jury if judge == "jury" else ask_jev)(state, guide, rows)
@@ -507,6 +526,43 @@ def main() -> int:
         else:
             answers, decided_by = scout or first, "human"
             verdict = f"ASK A HUMAN: {f'the {judge} and the scout failed' if not answers else f'confidence below {MIN_CONFIDENCE}'}"
+    return answers, decided_by, verdict, first, scout
+
+
+def main() -> int:
+    p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    p.add_argument("repo")
+    p.add_argument("task")
+    p.add_argument("--judge", choices=["jury", "jev"], default="jury")
+    p.add_argument("--no-rules", action="store_true", help="skip the rules stage (to compare against the jury)")
+    args = p.parse_args()
+
+    if args.judge == "jev":
+        if VENV_PYTHON.exists() and Path(sys.prefix).resolve() != VENV_PYTHON.parent.parent.resolve():
+            os.execv(VENV_PYTHON, [str(VENV_PYTHON), __file__, *sys.argv[1:]])  # JEV lives in ~/jev/.venv
+        from dotenv import load_dotenv
+
+        load_dotenv(HERE / ".env")  # TYPESAFE_API_KEY
+    judge = args.judge
+    started = time.time()
+    repo = git(args.repo, "rev-parse", "--show-toplevel").strip()
+    if not repo:
+        raise SystemExit(f"{args.repo} is not a git repository")
+    guide, rows = load_rules()
+    facts = collect(repo, args.task)
+    summary = summarize(facts)
+    state = f"Task: {args.task}\n\nRepo facts, collected by a script without an LLM:\n{summary}"
+    print(summary, file=sys.stderr)
+
+    log = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "repo": repo, "task": args.task, "facts": facts,
+           "summary": summary, "judge": judge, judge: None, "scout": None}
+    first = scout = verdict = None
+    rule, log["rules"] = (None, "skipped (--no-rules)") if args.no_rules else rule_route(args.task, facts)
+    print(f"rules: {log['rules']}", file=sys.stderr)
+    if rule:
+        answers, decided_by = rule, "rules"
+    else:
+        answers, decided_by, verdict, first, scout = staged(repo, state, guide, rows, judge, log)
 
     result = route(answers, rows) if answers else {"pattern_row": None, "pattern": None, "models": {},
                                                    "effort": {}, "confidence": 0.0}
@@ -514,6 +570,7 @@ def main() -> int:
     if answers:
         r = rows[result["pattern_row"]]
         reasons.append(f"Row {result['pattern_row']} ({r['task']}): {r['tool']}")
+    reasons += rule["reasons"] if rule else []
     reasons += [log["effort_defaulted"]] if log.get("effort_defaulted") else []
     reasons += [describe(name, a) for name, a in ((judge, first), ("scout", scout)) if a]
     reasons += scout.get("reasons", []) if scout else []

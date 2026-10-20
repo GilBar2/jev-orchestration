@@ -19,10 +19,13 @@ task + repo
 1. Repo facts, no LLM (git grep, git log -S, imports, tests, risk words)
    │
    ▼
-2. $0 jury votes on 3 questions ──── every confidence ≥ 0.7 ──► route (decided_by: jury)
+2. Rules, no LLM ─────── clear-cut ──► route in about 1 second (decided_by: rules)
+   │ not clear-cut
+   ▼
+3. $0 jury votes on 3 questions ──── every confidence ≥ 0.7 ──► route (decided_by: jury)
    │ any below 0.7, or the jury fails
    ▼
-3. Read-only Haiku scout explores the repo, answers the same 3 ──► ≥ 0.7 ──► route (decided_by: scout)
+4. Read-only Haiku scout explores the repo, answers the same 3 ──► ≥ 0.7 ──► route (decided_by: scout)
    │ only effort below 0.7                    │ pattern or model below 0.7
    ▼                                          ▼
 effort = medium, logged                    ASK A HUMAN, exit 2
@@ -35,15 +38,22 @@ effort = medium, logged                    ASK A HUMAN, exit 2
    - the repo's size
    - whether the task lists separate items, and whether those items share files
    - risk flags: auth, payments, migrations, data, secrets
-2. **Three questions.** The jury answers each one:
+2. **Rules.** If the facts make the answer obvious, no model is called:
+   - any risk flag → row 7 (opus plans, codex reviews, high effort). This leans toward the safe, more expensive route.
+   - 1 item, 1–2 files → row 1, sonnet, low effort if the task names a function defined in that one file, otherwise medium.
+   - 2 or more items whose files don't overlap → row 5 worktrees, sonnet, medium.
+   - The task mentions review, diff, merge, stuck, search, logs, research, compare, team, Codex, Hermes, refactor or design, or no files match → not clear-cut, so it goes to the jury.
+
+   `--no-rules` skips this stage, for example to compare rules against the jury.
+3. **Three questions.** If the rules don't decide, the jury answers each one:
    - which row of `ORCHESTRATION.md` fits (1–11)
    - which model does the main work (haiku, sonnet, opus, codex, hermes)
    - which effort (low, medium, high)
 
    Each question needs at least 2 votes and a strict majority. Its confidence is the average confidence of the winning voters.
-3. **Roles.** Each row maps to roles. For example, row 7 means Claude plans and Codex reviews, and row 3 means a lead with a Haiku scout and a Sonnet fixer. The answers fill in a model and an effort for each role.
-4. **Fallback.** If the jury is unsure, the scout agent (`agents/scout.md`) gets the same facts plus read-only tools: no edit tools and an allow-list of read-only shell commands.
-5. **Log.** Every decision, with all votes and reasons, goes to `route-log.jsonl` for later tuning.
+4. **Roles.** Each row maps to roles. For example, row 7 means Claude plans and Codex reviews, and row 3 means a lead with a Haiku scout and a Sonnet fixer. The answers fill in a model and an effort for each role.
+5. **Fallback.** If the jury is unsure, the scout agent (`agents/scout.md`) gets the same facts plus read-only tools: no edit tools and an allow-list of read-only shell commands.
+6. **Log.** Every decision, with the rule that matched (or why none did), all votes and reasons, goes to `route-log.jsonl` for later tuning.
 
 The router never edits the target repo or switches its branches.
 
@@ -61,21 +71,22 @@ python3 ~/jev/route.py ~/code/my-app "Fix the 100/400 leap-year rule in is_leap_
   "pattern": "None: one agent",
   "models": {"agent": "sonnet"},
   "effort": {"agent": "low"},
-  "confidence": 0.92,
-  "decided_by": "jury",
-  "reasons": ["Row 1 (One bug, 1–2 files, steps in order): claude", "jury: pattern 1 (0.97), ..."]
+  "confidence": 1.0,
+  "decided_by": "rules",
+  "reasons": ["Row 1 (One bug, 1–2 files, steps in order): claude", "rule one-bug: 1 item, 1 file(s) (src/dates.py), ..."]
 }
 ```
 
-The JSON goes to stdout, and a trace plus the verdict line go to stderr. Exit code 0 means routed, 2 means ASK A HUMAN. A run takes about 25–35 seconds.
+The JSON goes to stdout, and a trace plus the verdict line go to stderr. Exit code 0 means routed, 2 means ASK A HUMAN. A run decided by rules takes about 1 second. The jury takes about 25–35 seconds, and the jury plus the scout up to about 3 minutes.
 
 Results on the practice repo:
 
-| Task | Route |
-|---|---|
-| One-file bug | row 1 one agent, sonnet, low |
-| Two independent tickets | row 5 worktrees, sonnet, low |
-| Password login + session tokens | row 7 vendor handoff, opus plans + codex reviews, high |
+| Task | Route | Decided by |
+|---|---|---|
+| One-file bug | row 1 one agent, sonnet, low | rules, 1 s |
+| Two independent tickets | row 5 worktrees, sonnet, medium | rules, 1 s |
+| Password login + session tokens | row 7 vendor handoff, opus plans + codex reviews, high | rules, 1 s |
+| Add a CSV export command (no files match) | row 1 one agent, sonnet, medium | jury, then scout |
 
 ## Repo layout
 
