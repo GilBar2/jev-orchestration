@@ -1,0 +1,8 @@
+{
+  "id": "jury-gate",
+  "fixOnFailureRounds": 1,
+  "checks": [
+    { "type": "diff_policy", "requirePaths": ["."], "forbidPaths": [".env", ".github"], "maxFiles": 40 },
+    { "type": "command", "cmd": "python3", "args": ["__CLAW_DIR__/jury_gate.py"], "timeoutMs": 900000 }
+  ]
+}

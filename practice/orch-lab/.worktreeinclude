@@ -1,0 +1,3 @@
+# Untracked files to copy into each new worktree (gitignore syntax).
+# This repo needs none. In a real project, list files such as:
+# .env

@@ -1,0 +1,10 @@
+{
+  "agent_servers": {
+    "Claw Orchestrator": {
+      "type": "custom",
+      "command": "<output of: command -v clawo>",
+      "args": ["acp"],
+      "env": { "PATH": "<folder of clawo>:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin" }
+    }
+  }
+}

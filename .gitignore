@@ -1,0 +1,8 @@
+# secrets and local state
+.env
+.venv/
+__pycache__/
+route-log.jsonl
+.claude/
+# the live practice repo is its own git repo; its seed is in practice/orch-lab
+/orch-lab/

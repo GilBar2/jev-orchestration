@@ -1,0 +1,3 @@
+# Only needed for the optional paid JEV judge (--judge jev)
+typesafe-sdk==0.7.5
+python-dotenv
