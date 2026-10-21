@@ -97,7 +97,7 @@ Results on the practice repo:
 | `claw/` | Claw Orchestrator loop, jury gate, contract | `~/jev/claw/` |
 | `agents/scout.md`, `agents/fixer.md` | Claude Code subagents | `~/.claude/agents/` |
 | `skills/orchestrate/SKILL.md` | `/orchestrate` skill (recommends a pattern) | `~/.claude/skills/orchestrate/` |
-| `skills/route/SKILL.md` | `/route` skill: type `/route` and the task in plain words (runs `route.py` on the current repo) | `~/.claude/skills/route/` |
+| `skills/router/` | `/router` skill: opens a widget to describe a task and pick a project, then shows the answer as a card (`SKILL.md` + `widget.py`) | `~/.claude/skills/router/` |
 | `practice/orch-lab/` | practice repo with two planted bugs | `~/jev/orch-lab/` (as its own git repo) |
 | `zed/agent-servers.example.json` | Zed chat panel for Claw | merge into `~/.config/zed/settings.json` |
 | `requirements-jev.txt`, `.env.example` | only for the optional JEV judge | `~/jev/.venv`, `~/jev/.env` |
@@ -120,8 +120,8 @@ Work through the steps in order, run every command yourself, and stop to ask me 
    claude plugin marketplace add openai/codex-plugin-cc
    claude plugin install codex@openai-codex
 5. Copy agents/scout.md and agents/fixer.md to ~/.claude/agents/, and
-   skills/orchestrate/SKILL.md to ~/.claude/skills/orchestrate/SKILL.md, and skills/route/SKILL.md to
-   ~/.claude/skills/route/SKILL.md (ask before overwriting).
+   skills/orchestrate/SKILL.md to ~/.claude/skills/orchestrate/SKILL.md, and the skills/router/ folder
+   (SKILL.md and widget.py) to ~/.claude/skills/router/ (ask before overwriting).
 6. Add this line to ~/.zprofile unless it is already there:
    alias claude-team='CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 claude --teammate-mode auto'
 7. Practice repo: copy practice/orch-lab to ~/jev/orch-lab, then inside it run
